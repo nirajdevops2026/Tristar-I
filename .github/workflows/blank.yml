@@ -3,59 +3,48 @@ name: 'Deploy Infrastructure'
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch: # Manual trigger option
+  workflow_dispatch: # Manual trigger ke liye
 
-# CRITICAL: These permissions are REQUIRED for OIDC authentication
+# CRITICAL: OIDC token ke liye yeh permission zaroori hai
 permissions:
-  id-token: write   # GitHub ko OIDC token generate karne ki permission
-  contents: read    # Repository contents read karne ke liye
+  id-token: write
+  contents: read
 
 jobs:
   terraform:
     name: 'Terraform Deploy'
     runs-on: ubuntu-latest
-    
-    # OPTIONAL: Environment for manual approvals (recommended for production)
-    # environment: production
-    
-    # Prevents parallel runs from corrupting Terraform state
+
+    # Recommended: parallel runs se bachne ke liye
     concurrency:
       group: terraform-${{ github.ref }}
       cancel-in-progress: false
 
     steps:
-      # 1. Checkout code
-      - name: 'Checkout Repository'
+      - name: 'Checkout Code'
         uses: actions/checkout@v4
 
-      # 2. Setup Terraform
       - name: 'Setup Terraform'
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.5.0 # Use specific version for stability
-          terraform_wrapper: false # Better error messages
+          terraform_version: 1.5.0
 
-      # 3. Azure Login with OIDC (FIXED)
+      # IMPORTANT: 'auth-type' hataya, bas client-id, tenant-id, subscription-id diya
       - name: 'Azure Login via OIDC'
-        uses: azure/login@v3  # Upgraded from v2 to v3
+        uses: azure/login@v3  # v3 use karein, v2 maintenance mein hai
         with:
-          auth-type: OIDC  # EXPLICITLY SET OIDC auth type
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # 4. Terraform Init
       - name: 'Terraform Init'
         run: terraform init
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_USE_OIDC: true # Tells Terraform to use OIDC
+          ARM_USE_OIDC: true # Terraform ko batayein ki OIDC use karna hai
 
-      # 5. Terraform Plan (always runs, even on PRs)
       - name: 'Terraform Plan'
         run: terraform plan -out=tfplan
         env:
@@ -64,7 +53,6 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
 
-      # 6. Terraform Apply (ONLY on main branch push)
       - name: 'Terraform Apply'
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: terraform apply -auto-approve tfplan
@@ -73,11 +61,3 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: true
-
-      # 7. Optional: Upload plan as artifact for review
-      - name: 'Upload Terraform Plan'
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: tfplan
